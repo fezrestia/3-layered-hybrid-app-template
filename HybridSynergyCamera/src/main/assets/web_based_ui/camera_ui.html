@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8"/>
+    <title>Plug-IN Camera UI</title>
+    <meta name="description" content="Interactive Camera UI"/>
+
+    <link rel="shortcut icon" href="img.jpg"/>
+
+    <link rel="stylesheet" href="camera_ui.css"/>
+
+  </head>
+
+  <body>
+    <p id ="helloworld" class="string">HELLO WORLD !</p>
+    <p id ="test">TEST</p>
+
+    <img
+        src="img.jpg"
+        width="240"
+        height="240"
+        alt="jpg"
+        title="test"
+    />
+
+    <div
+        id="area"
+    >
+      <form
+          action="survey.php"
+          method="post"
+      >
+        <p class="input">INPUT:<input type="text" name="name" size="60" maxlength="9" required></p>
+        <p class="input">PASS :<input type="password" name="password"></p>
+        <p><input type="hidden" name="user_id" value="32"></p>
+        <p>DATE :<input type="date" name="date"></p>
+        <p class="web">URL  :<input type="url" name="url"></p>
+        <p class="web">EMAIL:<input type="email" name="email"></p>
+        <p>MEMO :<textarea name="memo"></textarea></p>
+        <p><input type="submit" value="SUBMIT"></p>
+      </form>
+    </div>
+
+
+
+    <div
+        id="top-right-box"
+    >
+      TopRight
+    </div>
+
+
+    <script src="camera_ui.js"></script>
+
+  </body>
+
+</html>
