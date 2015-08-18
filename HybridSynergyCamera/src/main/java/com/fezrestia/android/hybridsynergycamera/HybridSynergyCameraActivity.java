@@ -22,9 +22,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -38,7 +35,7 @@ public class HybridSynergyCameraActivity extends Activity {
 
     private static final String TAG = HybridSynergyCameraActivity.class.getSimpleName();
 
-    private static final boolean IS_DEBUG = false;
+    private static final boolean IS_DEBUG = true;
 
     private static void logDebug(String tag, String event) {
         android.util.Log.e("TraceLog",
@@ -51,11 +48,11 @@ public class HybridSynergyCameraActivity extends Activity {
     // Camera.
     private Camera mCamera = null;
     private Camera.Parameters mCameraParams = null;
-    private SurfaceTexture mDummySurfaceTexture = null;
-    private ByteBufferRing mFrameBufferRing = null;
+    private SurfaceTexture mCameraPreviewStream = null;
     private static final int PREVIEW_FRAME_WIDTH = 1280;
     private static final int PREVIEW_FRAME_HEIGHT = 720;
-    private static final int PREVIEW_FRAME_RING_BUFFER_SIZE = 5;
+    private static final int PICTURE_FRAME_WIDTH = 1280;
+    private static final int PICTURE_FRAME_HEIGHT = 720;
 
     // UI.
     private FrameLayout mRootView = null;
@@ -64,11 +61,15 @@ public class HybridSynergyCameraActivity extends Activity {
 
     // Thread.
     private Handler mUiWorker = new Handler();
-    private ExecutorService mBackWorker = Executors.newSingleThreadExecutor(
-            new BackWorkerThreadFactory());
+    private ExecutorService mCameraBackWorker = Executors.newSingleThreadExecutor(
+            new CameraBackWorkerThreadFactory());
+    private ExecutorService mStateBackWorker = Executors.newSingleThreadExecutor(
+            new StateBackWorkerThreadFactory());
 
-    // Flags.
-    private boolean mIsSleep = true;
+    // State.
+    private ControlState mCurrentState = new StateNone();
+
+    //// ANDROID APPLICATION LIFE CYCLE RELATED ///////////////////////////////////////////////////
 
     /**
      * Life-Cycle interface.
@@ -89,7 +90,7 @@ public class HybridSynergyCameraActivity extends Activity {
         mTextureView.setSurfaceTextureListener(mTextureViewCallback);
         mUserWebView = new UserWebView(this);
         mUserWebView.initialize();
-mUserWebView.setAlpha(0.5f);
+        mUserWebView.setAlpha(1.0f);
 
         // Configure view hierarchy.
         setContentView(mRootView);
@@ -107,25 +108,71 @@ mUserWebView.setAlpha(0.5f);
         if (IS_DEBUG) logDebug(TAG, "onResume() : E");
         super.onResume();
 
-        // Start camera open.
-        mBackWorker.execute(mInitializeCameraTask);
+        // State.
+        mControlEventInterface.onResume();
 
-        // Check.
-        if (mTextureView.isAvailable()) {
-            if (IS_DEBUG) logDebug(TAG, "Texture is already available.");
-            mTextureViewCallback.onSurfaceTextureAvailable(
-                    mTextureView.getSurfaceTexture(),
-                    mTextureView.getWidth(),
-                    mTextureView.getHeight());
-        } else {
-            if (IS_DEBUG) logDebug(TAG, "Texture is not available yet. Wait for callback.");
-        }
+        // Camera.
+        mCameraBackWorker.execute(mInitializeCameraTask);
 
-        // Reset flags.
-        mIsSleep = false;
+        // Surface.
+        mUiWorker.post(mCheckSurfaceTextureTask);
 
         if (IS_DEBUG) logDebug(TAG, "onResume() : X");
     }
+
+    /**
+     * Life-Cycle interface.
+     */
+    @Override
+    public void onPause() {
+        if (IS_DEBUG) logDebug(TAG, "onPause() : E");
+
+        // Camera.
+        mCameraBackWorker.execute(mFinalizeCameraTask);
+
+        // State.
+        mControlEventInterface.onPause();
+
+        super.onPause();
+        if (IS_DEBUG) logDebug(TAG, "onPause() : X");
+    }
+
+    /**
+     * Life-Cycle interface.
+     */
+    @Override
+    public void onDestroy() {
+        if (IS_DEBUG) logDebug(TAG, "onDestroy() : E");
+
+        // Await finalize camera worker thread.
+        BackWorkerBlocker cameraBlocker = new BackWorkerBlocker();
+        mCameraBackWorker.execute(cameraBlocker);
+        cameraBlocker.await();
+
+        // Await finalize state worker thread.
+        BackWorkerBlocker stateBlocker = new BackWorkerBlocker();
+        mStateBackWorker.execute(stateBlocker);
+        stateBlocker.await();
+
+        // Notify to Native.
+        nativeOnActivityDestroyed();
+
+        // Configure view hierarchy.
+        mRootView.removeView(mTextureView);
+        mRootView.removeView(mUserWebView);
+
+        // UI.
+        mTextureView.setSurfaceTextureListener(null);
+        mTextureView = null;
+        mUserWebView.release();
+        mUserWebView = null;
+        mRootView = null;
+
+        super.onDestroy();
+        if (IS_DEBUG) logDebug(TAG, "onDestroy() : X");
+    }
+
+    //// UI SURFACE TEXTURE RELATED ///////////////////////////////////////////////////////////////
 
     private final TextureViewCallback mTextureViewCallback = new TextureViewCallback();
     private class TextureViewCallback implements TextureView.SurfaceTextureListener {
@@ -139,8 +186,15 @@ mUserWebView.setAlpha(0.5f);
                 final int height) {
             if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureAvailable() : E");
 
+            // Notify to native.
             Runnable task = new NotifySurfaceInitializedTask(new Surface(surface));
-            mBackWorker.execute(task);
+            mCameraBackWorker.execute(task);
+
+            // Register camera preview stream.
+            mCameraBackWorker.execute(mRegisterCameraPreviewStreamTask);
+
+            // Notify to state.
+            mControlEventInterface.onUiSurfaceInitialized();
 
             if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureAvailable() : X");
         }
@@ -160,7 +214,7 @@ mUserWebView.setAlpha(0.5f);
 
             @Override
             public void run() {
-                nativeOnSurfaceInitialized(mSurface);
+                nativeOnUiSurfaceInitialized(mSurface);
             }
         }
 
@@ -168,8 +222,15 @@ mUserWebView.setAlpha(0.5f);
         public boolean onSurfaceTextureDestroyed(final SurfaceTexture surface) {
             if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureDestroyed() : E");
 
+            // Unregister camera preview stream
+            mCameraBackWorker.execute(mUnregisterCameraPreviewStreamTask);
+
+            // Notify to native.
             Runnable task = new NotifySurfaceFinalizedTask();
-            mBackWorker.execute(task);
+            mCameraBackWorker.execute(task);
+
+            // Notify to state.
+            mControlEventInterface.onUiSurfaceInitialized();
 
             if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureDestroyed() : X");
             return false;
@@ -178,7 +239,7 @@ mUserWebView.setAlpha(0.5f);
         private class NotifySurfaceFinalizedTask implements Runnable {
             @Override
             public void run() {
-                nativeOnSurfaceFinalized();
+                nativeOnUiSurfaceFinalized();
             }
         }
 
@@ -191,60 +252,37 @@ mUserWebView.setAlpha(0.5f);
 
         @Override
         public void onSurfaceTextureUpdated(SurfaceTexture surface) {
-            if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureUpdated() : E");
+//            if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureUpdated() : E");
             // NOP.
-            if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureUpdated() : X");
+//            if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureUpdated() : X");
         }
     }
 
+    private final CheckSurfaceTextureTask mCheckSurfaceTextureTask = new CheckSurfaceTextureTask();
+    private class CheckSurfaceTextureTask implements Runnable {
+        // Log tag.
+        private final String TAG = CheckSurfaceTextureTask.class.getSimpleName();
 
+        @Override
+        public void run() {
+            if (IS_DEBUG) logDebug(TAG, "run() : E");
 
-    /**
-     * Life-Cycle interface.
-     */
-    @Override
-    public void onPause() {
-        if (IS_DEBUG) logDebug(TAG, "onPause() : E");
+            // Check.
+            if (mTextureView.isAvailable()) {
+                if (IS_DEBUG) logDebug(TAG, "Texture is already available.");
+                mTextureViewCallback.onSurfaceTextureAvailable(
+                        mTextureView.getSurfaceTexture(),
+                        mTextureView.getWidth(),
+                        mTextureView.getHeight());
+            } else {
+                if (IS_DEBUG) logDebug(TAG, "Texture is not available yet. Wait for callback.");
+            }
 
-        // Flags.
-        mIsSleep = true;
-
-        // Thread.
-        mBackWorker.execute(mFinalizeCameraTask);
-
-        super.onPause();
-        if (IS_DEBUG) logDebug(TAG, "onPause() : X");
+            if (IS_DEBUG) logDebug(TAG, "run() : X");
+        }
     }
 
-    /**
-     * Life-Cycle interface.
-     */
-    @Override
-    public void onDestroy() {
-        if (IS_DEBUG) logDebug(TAG, "onDestroy() : E");
-
-        // Await finalize worker thread.
-        BackWorkerBlocker blocker = new BackWorkerBlocker();
-        mBackWorker.execute(blocker);
-        blocker.await();
-
-        // Notify to Native.
-        nativeOnActivityDestroyed();
-
-        // Configure view hierarchy.
-        mRootView.removeView(mTextureView);
-        mRootView.removeView(mUserWebView);
-
-        // UI.
-        mTextureView.setSurfaceTextureListener(null);
-        mTextureView = null;
-        mUserWebView.release();
-        mUserWebView = null;
-        mRootView = null;
-
-        super.onDestroy();
-        if (IS_DEBUG) logDebug(TAG, "onDestroy() : X");
-    }
+    //// NATIVE TO JAVA COMMAND RELATED ///////////////////////////////////////////////////////////
 
     // Commands.
     private static final int CMD_STORE_NATIVE_APP_CONTEXT_POINTER       = 0x0001;
@@ -267,6 +305,8 @@ mUserWebView.setAlpha(0.5f);
         }
     }
 
+    //// CAMERA INITIALIZE / FINALIZE RELATED /////////////////////////////////////////////////////
+
     private final InitializeCameraTask mInitializeCameraTask = new InitializeCameraTask();
     private class InitializeCameraTask implements Runnable {
         // Log tag.
@@ -283,21 +323,10 @@ mUserWebView.setAlpha(0.5f);
                 if (IS_DEBUG) logDebug(TAG, "Camera.open() : X");
                 mCameraParams = mCamera.getParameters();
                 mCameraParams.setPreviewSize(PREVIEW_FRAME_WIDTH, PREVIEW_FRAME_HEIGHT);
-                mCameraParams.setFocusMode(
-                        Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
+                mCameraParams.setPictureSize(PICTURE_FRAME_WIDTH, PICTURE_FRAME_HEIGHT);
+                mCameraParams.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
                 mCamera.setParameters(mCameraParams);
                 mCameraParams = mCamera.getParameters();
-
-                if (IS_DEBUG) logDebug(TAG, "Camera.setPreviewTexture() : E");
-                // Dummy surface to gain preview callback.
-                mDummySurfaceTexture = new SurfaceTexture(100, true);
-                mDummySurfaceTexture.setDefaultBufferSize(8, 8);
-                try {
-                    mCamera.setPreviewTexture(mDummySurfaceTexture);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-                if (IS_DEBUG) logDebug(TAG, "Camera.setPreviewTexture() : X");
 
                 if (IS_DEBUG) logDebug(TAG, "Camera.startPreview() : E");
                 mCamera.startPreview();
@@ -309,20 +338,8 @@ mUserWebView.setAlpha(0.5f);
                         mCameraParams.getPreviewSize().height,
                         mCameraParams.getPreviewFormat());
 
-                // Start preview frame handling.
-                mFrameBufferRing = new ByteBufferRing(
-                        mCameraParams.getPreviewSize().width
-                        * mCameraParams.getPreviewSize().height
-                        * 3 / 2,
-                        PREVIEW_FRAME_RING_BUFFER_SIZE);
-
-                // Request frame.
-                mCamera.setPreviewCallbackWithBuffer(mPreviewFrameCallback);
-                for (int i = 0; i < PREVIEW_FRAME_RING_BUFFER_SIZE - 2; ++i) {
-                    mCamera.addCallbackBuffer(mFrameBufferRing.getCurrent().array());
-                    mFrameBufferRing.increment();
-                }
-
+                // Notify to state.
+                mControlEventInterface.onCameraInitialized();
             } else {
                 if (IS_DEBUG) logDebug(TAG, "Camera is already opened.");
             }
@@ -357,240 +374,236 @@ mUserWebView.setAlpha(0.5f);
             }
             if (IS_DEBUG) logDebug(TAG, "Close camera : X");
 
-            // Release buffer.
-            if (mFrameBufferRing != null) {
-                mFrameBufferRing.release();
-                mFrameBufferRing = null;
-            }
-
-            // Release texture.
-            if (mDummySurfaceTexture != null) {
-                mDummySurfaceTexture.release();
-                mDummySurfaceTexture = null;
-            }
-
+            // Notify.
             nativeOnCameraReleased();
+
+            // Notify to state.
+            mControlEventInterface.onCameraFinalized();
 
             if (IS_DEBUG) logDebug(TAG, "run() : X");
         }
     }
 
-    private final PreviewFrameCallback mPreviewFrameCallback = new PreviewFrameCallback();
-    private class PreviewFrameCallback implements Camera.PreviewCallback {
+    //// CAMERA PREVIEW STREAM RELATED ///////////////////////////////////////////////////////////
+
+    private final RegisterCameraPreviewStreamTask mRegisterCameraPreviewStreamTask
+            = new RegisterCameraPreviewStreamTask();
+    private class RegisterCameraPreviewStreamTask implements Runnable {
         // Log tag.
-        private final String TAG = PreviewFrameCallback.class.getSimpleName();
-
-        @Override
-        public void onPreviewFrame(final byte[] data, Camera camera) {
-            if (IS_DEBUG) logDebug(TAG, "onPreviewFrame() : E");
-
-            if (!mIsSleep) {
-                if (!mHandlePreviewCallbackTask.isBusy()) {
-                    ByteBuffer buf = mFrameBufferRing.findByByteArray(data);
-
-                    if (IS_DEBUG) logDebug(TAG, "buf.len = " + buf.array().length);
-                    if (IS_DEBUG) logDebug(TAG, "buf.offset = " + buf.arrayOffset());
-                    if (IS_DEBUG) logDebug(TAG, "buf.capacity = " + buf.capacity());
-                    if (IS_DEBUG) logDebug(TAG, "buf.limit = " + buf.limit());
-                    if (IS_DEBUG) logDebug(TAG, "buf.position = " + buf.position());
-
-                    mHandlePreviewCallbackTask.setData(
-                            buf.array(),
-                            buf.arrayOffset(),
-                            mFrameBufferRing.getEachBufSize());
-                    mBackWorker.execute(mHandlePreviewCallbackTask);
-                } else {
-                    if (IS_DEBUG) logDebug(TAG, "HandlePreviewCallbackTask is busy.");
-                }
-
-                // Request next.
-                mCamera.addCallbackBuffer(mFrameBufferRing.getCurrent().array());
-                mFrameBufferRing.increment();
-            }
-
-            if (IS_DEBUG) logDebug(TAG, "onPreviewFrame() : X");
-        }
-    }
-
-    private final HandlePreviewCallbackTask mHandlePreviewCallbackTask
-            = new HandlePreviewCallbackTask();
-    private class HandlePreviewCallbackTask implements Runnable {
-        // Log tag.
-        private final String TAG = HandlePreviewCallbackTask.class.getSimpleName();
-
-        // Buffer.
-        private byte[] mData = null;
-        private int mOffset = 0;
-        private int mSize = 0;
-
-        // Current task is now running or not.
-        private volatile boolean mIsBusy = false;
-
-        // CONSTRUCTOR.
-        public HandlePreviewCallbackTask() {
-            // NOP.
-        }
-
-        /**
-         * Set frame data to be processed.
-         *
-         * @param data
-         * @param offset
-         * @param size
-         */
-        public void setData(byte[] data, int offset, int size) {
-            mData = data;
-            mOffset = offset;
-            mSize = size;
-
-            mIsBusy = true;
-        }
-
-        /**
-         * Task is now running or not.
-         *
-         * @return
-         */
-        public boolean isBusy() {
-            return mIsBusy;
-        }
+        private final String TAG = RegisterCameraPreviewStreamTask.class.getSimpleName();
 
         @Override
         public void run() {
             if (IS_DEBUG) logDebug(TAG, "run() : E");
 
-            // Check.
-            if (mIsSleep) {
-                // Already released.
-                if (IS_DEBUG) logDebug(TAG, "Already released.");
-                return;
+            if (mCamera != null) {
+                // Surface to gain preview stream.
+                final int previewTexName = nativeGetTextureNameOfCameraPreviewStream();
+                if (IS_DEBUG) logDebug(TAG, "PreviewTex = " + previewTexName);
+
+                // Surface texture.
+                mCameraPreviewStream = new SurfaceTexture(previewTexName);
+                mCameraPreviewStream.setOnFrameAvailableListener(mCameraPreviewStreamCallback);
+
+                // Notify to native.
+                nativeOnCameraPreviewStreamInitialized(
+                        new Surface(mCameraPreviewStream),
+                        PREVIEW_FRAME_WIDTH,
+                        PREVIEW_FRAME_HEIGHT);
+
+                try {
+                    mCamera.setPreviewTexture(mCameraPreviewStream);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else {
+                if (IS_DEBUG) logDebug(TAG, "Camera is already released.");
             }
-
-            // Send data to native.
-            nativeOnPreviewFrameUpdated(
-                    mCameraParams.getPreviewSize().width,
-                    mCameraParams.getPreviewSize().height,
-                    mCameraParams.getPreviewFormat(),
-                    mData,
-                    mOffset,
-                    mSize);
-
-            // Release flag.
-            mIsBusy = false;
 
             if (IS_DEBUG) logDebug(TAG, "run() : X");
         }
     }
 
-    //// RING BUFFER /////////////////////////////////////////////////////////////////////////////
+    private final UnregisterCameraPreviewStreamTask mUnregisterCameraPreviewStreamTask
+            = new UnregisterCameraPreviewStreamTask();
+    private class UnregisterCameraPreviewStreamTask implements Runnable {
+        // Log tag.
+        private final String TAG = UnregisterCameraPreviewStreamTask.class.getSimpleName();
 
-    private static class ByteBufferRing {
-        // Buffer list.
-        private List<ByteBuffer> mBufferList = new ArrayList<ByteBuffer>();
+        @Override
+        public void run() {
+            if (IS_DEBUG) logDebug(TAG, "run() : E");
 
-        // Current index.
-        private int mCurrentBufferIndex = 0;
+            // Release texture.
+            if (mCameraPreviewStream != null) {
+                // Notify to native.
+                nativeOnCameraPreviewStreamFinalized();
 
-        // Each buffer size.
-        private final int mEachBufSize;
-
-        /**
-         * CONSTRUCTOR.
-         *
-         * @param eachBufSize
-         * @param ringSize
-         */
-        public ByteBufferRing(int eachBufSize, int ringSize) {
-            mEachBufSize = eachBufSize;
-
-            // Create and add buffers.
-            for (int i = 0; i < ringSize; ++i) {
-                // Allocate.
-                ByteBuffer buf = ByteBuffer.allocateDirect(eachBufSize);
-                // Cache.
-                mBufferList.add(buf);
+                // Release.
+                mCameraPreviewStream.setOnFrameAvailableListener(null);
+                mCameraPreviewStream.release();
+                mCameraPreviewStream = null;
             }
-        }
 
-        /**
-         * Release all resources.
-         */
-        public synchronized void release() {
-            // Clear.
-            for (ByteBuffer buf : mBufferList) {
-                buf.clear();
-            }
-            mBufferList.clear();
+            if (IS_DEBUG) logDebug(TAG, "run() : X");
         }
+    }
 
-        /**
-         * Get buffer size.
-         *
-         * @return
-         */
-        public int getEachBufSize() {
-            return mEachBufSize;
+    private final CameraPreviewStreamCallback mCameraPreviewStreamCallback
+            = new CameraPreviewStreamCallback();
+    private class CameraPreviewStreamCallback implements SurfaceTexture.OnFrameAvailableListener {
+        // Log tag.
+        private final String TAG = CameraPreviewStreamCallback.class.getSimpleName();
+
+        @Override
+        public void onFrameAvailable(SurfaceTexture surfaceTexture) {
+//            if (IS_DEBUG) logDebug(TAG, "onFrameAvailable() : E");
+
+            mCameraBackWorker.execute(mHandleCameraPreviewStreamCallbackTask);
+
+//            if (IS_DEBUG) logDebug(TAG, "onFrameAvailable() : X");
         }
+    }
 
-        /**
-         * Get current active buffer.
-         *
-         * @return
-         */
-        public synchronized ByteBuffer getCurrent() {
-            return mBufferList.get(mCurrentBufferIndex);
+    private final HandleCameraPreviewStreamCallbackTask mHandleCameraPreviewStreamCallbackTask
+            = new HandleCameraPreviewStreamCallbackTask();
+    private class HandleCameraPreviewStreamCallbackTask implements Runnable {
+        // Log tag.
+        private final String TAG = HandleCameraPreviewStreamCallbackTask.class.getSimpleName();
+
+        @Override
+        public void run() {
+//            if (IS_DEBUG) logDebug(TAG, "run() : E");
+
+            // Bind to application EGL.
+            nativeBindApplicationEglContext();
+
+            // Update texture.
+            mCameraPreviewStream.updateTexImage();
+
+            // Update matrix.
+            float[] matrix = new float[16];
+            mCameraPreviewStream.getTransformMatrix(matrix);
+            nativeSetSurfaceTextureTransformMatrix(matrix);
+
+            // Notify to native.
+            nativeOnCameraPreviewStreamUpdated();
+
+            // Unbind from application EGL.
+            nativeUnbindApplicationEglContext();
+
+//            if (IS_DEBUG) logDebug(TAG, "run() : X");
         }
+    }
 
-        /**
-         * Get next active buffer.
-         *
-         * @return
-         */
-        public synchronized ByteBuffer getNext() {
-            // Return next item.
-            return mBufferList.get(getNextIndex());
-        }
+    private final StartScanTask mStartScanTask = new StartScanTask();
+    private class StartScanTask implements Runnable {
+        // Log tag.
+        private final String TAG = StartScanTask.class.getSimpleName();
 
-        /**
-         * Increment active buffer.
-         */
-        public synchronized void increment() {
-            // Change to next index.
-            mCurrentBufferIndex = getNextIndex();
-        }
+        @Override
+        public void run(){
+            if (IS_DEBUG) logDebug(TAG, "run() : E");
 
-        private int getNextIndex() {
-            if ((mBufferList.size() - 1) <= mCurrentBufferIndex) {
-                // Current index is now on the end of list. Return 0.
-                return 0;
+            if (mCamera != null) {
+                mCamera.autoFocus(new ScanDoneCallback());
             } else {
-                return mCurrentBufferIndex + 1;
+                if (IS_DEBUG) logDebug(TAG, "Camera is null.");
+            }
+
+            if (IS_DEBUG) logDebug(TAG, "run() : X");
+        }
+
+        private class ScanDoneCallback implements Camera.AutoFocusCallback {
+            @Override
+            public void onAutoFocus(boolean isSuccess, Camera camera) {
+                mControlEventInterface.onScanLockDone();
+            }
+        }
+    }
+
+    private final CancelScanTask mCancelScanTask = new CancelScanTask();
+    private class CancelScanTask implements Runnable {
+        // Log tag.
+        private final String TAG = CancelScanTask.class.getSimpleName();
+
+        @Override
+        public void run(){
+            if (IS_DEBUG) logDebug(TAG, "run() : E");
+
+            if (mCamera != null) {
+                mCamera.cancelAutoFocus();
+            } else {
+                if (IS_DEBUG) logDebug(TAG, "Camera is null.");
+            }
+
+            if (IS_DEBUG) logDebug(TAG, "run() : X");
+        }
+    }
+
+    private final StillCaptureTask mStillCaptureTask = new StillCaptureTask();
+    private class StillCaptureTask implements Runnable {
+        // Log tag.
+        private final String TAG = StillCaptureTask.class.getSimpleName();
+
+        @Override
+        public void run(){
+            if (IS_DEBUG) logDebug(TAG, "run() : E");
+
+            if (mCamera != null) {
+                mCamera.takePicture(
+                    new StillCaptureShutterCallback(),
+                    null,
+                    new StillCaptureDoneCallback());
+            } else {
+                if (IS_DEBUG) logDebug(TAG, "Camera is null.");
+            }
+
+            if (IS_DEBUG) logDebug(TAG, "run() : X");
+        }
+
+        private class StillCaptureShutterCallback implements Camera.ShutterCallback {
+            // Log tag.
+            private final String TAG = StillCaptureShutterCallback.class.getSimpleName();
+
+            @Override
+            public void onShutter() {
+                mControlEventInterface.onStillShutterDone();
             }
         }
 
-        /**
-         * Get ByteBuffer instance including byteArray.
-         *
-         * @param byteArray
-         * @return
-         */
-        public synchronized ByteBuffer findByByteArray(byte[] byteArray) {
-            for (ByteBuffer eachBuf : mBufferList) {
-                if (eachBuf.array() == byteArray) {
-                    return eachBuf;
+        private class StillCaptureDoneCallback implements Camera.PictureCallback {
+            // Log tag.
+            private final String TAG = StillCaptureDoneCallback.class.getSimpleName();
+
+            @Override
+            public void onPictureTaken(byte[] data, Camera camera) {
+                mControlEventInterface.onStillCaptureDone();
+
+                if (mCamera != null) {
+                    // Restart preview.
+                    mCamera.startPreview();
                 }
             }
-            return null;
         }
     }
 
     //// THREAD RELATED //////////////////////////////////////////////////////////////////////////
 
-    private static class BackWorkerThreadFactory implements ThreadFactory {
+    private static class CameraBackWorkerThreadFactory implements ThreadFactory {
         @Override
         public Thread newThread(Runnable r) {
             Thread thread = new Thread(r);
-            thread.setName("BackWorker");
+            thread.setName("CameraWorker");
+            return thread;
+        }
+    }
+
+    private static class StateBackWorkerThreadFactory implements ThreadFactory {
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread thread = new Thread(r);
+            thread.setName("StateWorker");
             return thread;
         }
     }
@@ -634,16 +647,23 @@ mUserWebView.setAlpha(0.5f);
             int frameHeight,
             int imageFormat);
     private static final native int nativeOnCameraReleased();
-    private static final native int nativeOnPreviewFrameUpdated(
-            int frameWidth,
-            int frameHeight,
-            int imageFormat,
-            byte[] frameBuffer,
-            int frameBufferOffset,
-            int frameBufferSize);
 
-    private static final native int nativeOnSurfaceInitialized(Surface surface);
-    private static final native int nativeOnSurfaceFinalized();
+    private static final native int nativeOnCameraPreviewStreamInitialized(
+            Surface surface,
+            int width,
+            int height);
+    private static final native int nativeOnCameraPreviewStreamFinalized();
+
+    private static final native int nativeOnUiSurfaceInitialized(Surface surface);
+    private static final native int nativeOnUiSurfaceFinalized();
+
+    private static final native int nativeGetTextureNameOfCameraPreviewStream();
+    private static final native int nativeSetSurfaceTextureTransformMatrix(float[] matrix);
+
+    private static final native int nativeOnCameraPreviewStreamUpdated();
+
+    private static final native int nativeBindApplicationEglContext();
+    private static final native int nativeUnbindApplicationEglContext();
 
     //// UI WEB VIEW /////////////////////////////////////////////////////////////////////////////
 
@@ -687,7 +707,7 @@ mUserWebView.setAlpha(0.5f);
             addJavascriptInterface(mJSNI, INJECTED_JAVA_SCRIPT_NATIVE_INTERFACE_OBJECT_NAME);
 
             // Load.
-            loadUrl("file:///android_asset/web_based_ui/camera_ui.html");
+            loadUrl("file:///android_asset/web_based_ui/web_based_ui.html");
         }
 
         private String loadJs(String assetsName) {
@@ -757,14 +777,44 @@ mUserWebView.setAlpha(0.5f);
             // Log tag.
             private final String TAG = JavaScriptNativeInterface.class.getSimpleName();
 
+            // Touch event.
+            private final String TOUCH_EVENT_DOWN = "down";
+            private final String TOUCH_EVENT_MOVE = "move";
+            private final String TOUCH_EVENT_UP = "up";
+
+            // View ID.
+            private final String LEFT_TOP_ICON = "left-top-icon";
+            private final String LEFT_BOTTOM_ICON = "left-bottom-icon";
+            private final String RIGHT_TOP_ICON = "right-top-icon";
+            private final String RIGHT_BOTTOM_ICON = "right-bottom-icon";
+
             /**
-             * Called on content HTML loaded.
-             *
-             * @param htmlSrc
+             * Main capture icon clicked.
              */
             @JavascriptInterface
-            public final void onContentHtmlLoaded(final String htmlSrc) {
-                // NOP.
+            public final void onFourCornerIconTouched(String viewId, String event) {
+                if (IS_DEBUG) logDebug(TAG, "onFourCornerIconTouched() : E");
+                if (IS_DEBUG) logDebug(TAG, "ViewID = " + viewId);
+                if (IS_DEBUG) logDebug(TAG, "Event = " + event);
+
+                switch(event) {
+                    case TOUCH_EVENT_DOWN:
+                        mControlEventInterface.onScanLockRequested();
+                        break;
+
+                    case TOUCH_EVENT_MOVE:
+                        // NOP.
+                        break;
+
+                    case TOUCH_EVENT_UP:
+                        mControlEventInterface.onStillCaptureRequested();
+                        break;
+
+                    default:
+                        throw new IllegalArgumentException("Unexpected event : " + event);
+                }
+
+                if (IS_DEBUG) logDebug(TAG, "onFourCornerIconTouched() : X");
             }
         }
 
@@ -791,6 +841,459 @@ mUserWebView.setAlpha(0.5f);
 
     }
 
+    //// STATE MACHINE ////////////////////////////////////////////////////////////////////////////
+
+    private void changeStateTo(ControlState next) {
+        if (IS_DEBUG) logDebug(TAG, "changeStateTo() : NEXT = " + next.getClass().getSimpleName());
+
+        mCurrentState.exit();
+        mCurrentState = next;
+        mCurrentState.entry();
+    }
+
+    private enum ControlEvent {
+        // Life-cycle.
+        ON_RESUME,
+        ON_PAUSE,
+
+        // Device.
+        ON_CAMERA_INITIALIZED,
+        ON_CAMERA_FINALIZED,
+
+        // Surface.
+        ON_UI_SURFACE_INITIALIZED,
+        ON_UI_SURFACE_FINALIZED,
+
+        // Still capture.
+        ON_SCAN_LOCK_REQUESTED,
+        ON_SCAN_LOCK_CANCELED,
+        ON_SCAN_LOCK_DONE,
+        ON_STILL_CAPTURE_REQUESTED,
+        ON_STILL_SHUTTER_DONE,
+        ON_STILL_CAPTURE_DONE,
+
+
+
+    }
+
+    private abstract class ControlState {
+        // Log tag.
+        private final String TAG = ControlState.class.getSimpleName();
+
+        protected void entry() {
+            if (IS_DEBUG) logDebug(TAG, "entry()");
+        }
+
+        protected void exit() {
+            if (IS_DEBUG) logDebug(TAG, "exit()");
+        }
+
+        protected void onResume() {
+            if (IS_DEBUG) logDebug(TAG, "onResume()");
+        }
+
+        protected void onPause() {
+            if (IS_DEBUG) logDebug(TAG, "onPause()");
+        }
+
+        protected void onCameraInitialized() {
+            if (IS_DEBUG) logDebug(TAG, "onCameraInitialized()");
+        }
+
+        protected void onCameraFinalized() {
+            if (IS_DEBUG) logDebug(TAG, "onCameraFinalized()");
+        }
+
+        protected void onUiSurfaceInitialized() {
+            if (IS_DEBUG) logDebug(TAG, "onUiSurfaceInitialized()");
+        }
+
+        protected void onUiSurfaceFinalized() {
+            if (IS_DEBUG) logDebug(TAG, "onUiSurfaceFinalized()");
+        }
+
+        protected void onScanLockRequested() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockRequested()");
+        }
+
+        protected void onScanLockCanceled() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockCanceled()");
+        }
+
+        protected void onScanLockDone() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockDone()");
+        }
+
+        protected void onStillCaptureRequested() {
+            if (IS_DEBUG) logDebug(TAG, "onStillCaptureRequested()");
+        }
+
+        protected void onStillShutterDone() {
+            if (IS_DEBUG) logDebug(TAG, "onStillShutterDone()");
+        }
+
+        protected void onStillCaptureDone() {
+            if (IS_DEBUG) logDebug(TAG, "onStillCaptureDone()");
+        }
+
+
+
+    }
+
+    private class StateNone extends ControlState {
+        // Log tag.
+        private final String TAG = StateNone.class.getSimpleName();
+
+        @Override
+        public void onResume() {
+            if (IS_DEBUG) logDebug(TAG, "onResume() : E");
+
+            changeStateTo(new StateResume());
+
+            if (IS_DEBUG) logDebug(TAG, "onResume() : X");
+        }
+    }
+
+    private class StateResume extends ControlState {
+        // Log tag.
+        private final String TAG = StateResume.class.getSimpleName();
+
+        // Flags.
+        private boolean mIsUiSurfaceAlreadyReady = false;
+        private boolean mIsCameraAlreadyReady = false;
+
+        @Override
+        public void onPause() {
+            if (IS_DEBUG) logDebug(TAG, "onPause()");
+
+            changeStateTo(new StatePause());
+        }
+
+        @Override
+        public void onCameraInitialized() {
+            if (IS_DEBUG) logDebug(TAG, "onCameraInitialized()");
+
+            mIsCameraAlreadyReady = true;
+
+            checkCameraAndSurfaceAreReadyOrNot();
+        }
+
+        @Override
+        public void onUiSurfaceInitialized() {
+            if (IS_DEBUG) logDebug(TAG, "onUiSurfaceInitialized()");
+
+            mIsUiSurfaceAlreadyReady = true;
+
+            checkCameraAndSurfaceAreReadyOrNot();
+        }
+
+        private void checkCameraAndSurfaceAreReadyOrNot() {
+            if (mIsCameraAlreadyReady && mIsUiSurfaceAlreadyReady) {
+                if (IS_DEBUG) logDebug(TAG, "Camera and Surface are already ready.");
+
+                changeStateTo(new StateIdle());
+            } else {
+                if (IS_DEBUG) logDebug(TAG, "Camera or Surface is NOT ready yet.");
+                // NOP. Wait for ready.
+            }
+        }
+    }
+
+    private class StateIdle extends ControlState {
+        // Log tag.
+        private final String TAG = StateIdle.class.getSimpleName();
+
+        @Override
+        public void onPause() {
+            if (IS_DEBUG) logDebug(TAG, "onPause()");
+
+            changeStateTo(new StatePause());
+        }
+
+        @Override
+        public void onScanLockRequested() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockRequested()");
+
+            // Start scan.
+            mCameraBackWorker.execute(mStartScanTask);
+
+            changeStateTo(new StateScan());
+        }
+    }
+
+    private class StateScan extends ControlState {
+        // Log tag.
+        private final String TAG = StateScan.class.getSimpleName();
+
+        // Flags.
+        private boolean mIsAlreadyScanDone = false;
+        private boolean mIsAlreadyCaptureRequested = false;
+
+        @Override
+        public void onPause() {
+            if (IS_DEBUG) logDebug(TAG, "onPause()");
+
+            changeStateTo(new StatePause());
+        }
+
+        @Override
+        public void onScanLockCanceled() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockCanceled()");
+
+            // Cancel scan.
+            mCameraBackWorker.execute(mCancelScanTask);
+
+            changeStateTo(new StateIdle());
+        }
+
+        @Override
+        public void onScanLockDone() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockDone()");
+
+            mIsAlreadyScanDone = true;
+
+            checkScanStateAndCaptureRequest();
+        }
+
+        @Override
+        public void onStillCaptureRequested() {
+            if (IS_DEBUG) logDebug(TAG, "onStillCaptureRequested()");
+
+            mIsAlreadyCaptureRequested = true;
+
+            checkScanStateAndCaptureRequest();
+        }
+
+        private void checkScanStateAndCaptureRequest() {
+            if (mIsAlreadyScanDone && !mIsAlreadyCaptureRequested) {
+                // Only scan done. User does not request capture.
+
+                changeStateTo(new StateScanDone());
+            } else if (!mIsAlreadyScanDone && mIsAlreadyCaptureRequested) {
+                // NOP. Scan is not done yet, but user request capture.
+            } else if (mIsAlreadyScanDone && mIsAlreadyCaptureRequested) {
+                // Scan is already done, and user requests capture.
+
+                // Capture.
+                mCameraBackWorker.execute(mStillCaptureTask);
+
+                changeStateTo(new StateStillCapture());
+            } else {
+                throw new IllegalStateException("Scan not done, user does not request capture.");
+            }
+        }
+    }
+
+    private class StateScanDone extends ControlState {
+        // Log tag.
+        private final String TAG = StateScan.class.getSimpleName();
+
+        @Override
+        public void onPause() {
+            if (IS_DEBUG) logDebug(TAG, "onPause()");
+
+            changeStateTo(new StatePause());
+        }
+
+        @Override
+        public void onScanLockCanceled() {
+            if (IS_DEBUG) logDebug(TAG, "onScanLockCanceled()");
+
+            // Cancel scan.
+            mCameraBackWorker.execute(mCancelScanTask);
+
+            changeStateTo(new StateIdle());
+        }
+
+        @Override
+        public void onStillCaptureRequested() {
+            if (IS_DEBUG) logDebug(TAG, "onStillCaptureRequested()");
+
+            // Capture.
+            mCameraBackWorker.execute(mStillCaptureTask);
+
+            changeStateTo(new StateStillCapture());
+        }
+    }
+
+    private class StateStillCapture extends ControlState {
+        // Log tag.
+        private final String TAG = StateStillCapture.class.getSimpleName();
+
+        @Override
+        public void onPause() {
+            if (IS_DEBUG) logDebug(TAG, "onPause()");
+
+            changeStateTo(new StatePause());
+        }
+
+        @Override
+        public void onStillShutterDone() {
+            if (IS_DEBUG) logDebug(TAG, "onStillShutterDone()");
+
+
+
+        }
+
+        @Override
+        public void onStillCaptureDone() {
+            if (IS_DEBUG) logDebug(TAG, "onStillCaptureDone()");
+
+
+
+            changeStateTo(new StateIdle());
+        }
+    }
+
+    private class StatePause extends ControlState {
+        // Log tag.
+        private final String TAG = StatePause.class.getSimpleName();
+
+        @Override
+        protected void onCameraFinalized() {
+            if (IS_DEBUG) logDebug(TAG, "onCameraFinalized()");
+
+            changeStateTo(new StateNone());
+        }
+
+//        @Override
+//        protected void onUiSurfaceFinalized() {
+//            if (IS_DEBUG) logDebug(TAG, "onUiSurfaceFinalized()");
+//        }
+    }
+
+    private final ControlEventInterface mControlEventInterface = new ControlEventInterface();
+    private class ControlEventInterface extends ControlState {
+        // Send event task.
+        private class HandleEventTask implements Runnable {
+            // Event.
+            private final ControlEvent mEvent;
+
+            /**
+             * CONSTRUCTOR.
+             *
+             * @param event
+             */
+            public HandleEventTask(ControlEvent event) {
+                mEvent = event;
+            }
+
+            @Override
+            public void run() {
+                handleEvent(mEvent);
+            }
+        }
+
+        protected void onResume() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_RESUME));
+        }
+
+        protected void onPause() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_PAUSE));
+        }
+
+        protected void onCameraInitialized() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_CAMERA_INITIALIZED));
+        }
+
+        protected void onCameraFinalized() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_CAMERA_FINALIZED));
+        }
+
+        protected void onUiSurfaceInitialized() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_UI_SURFACE_INITIALIZED));
+        }
+
+        protected void onUiSurfaceFinalized() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_UI_SURFACE_FINALIZED));
+        }
+
+        protected void onScanLockRequested() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_SCAN_LOCK_REQUESTED));
+        }
+
+        protected void onScanLockCanceled() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_SCAN_LOCK_CANCELED));
+        }
+
+        protected void onScanLockDone() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_SCAN_LOCK_DONE));
+        }
+
+        protected void onStillCaptureRequested() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_STILL_CAPTURE_REQUESTED));
+        }
+
+        protected void onStillShutterDone() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_STILL_SHUTTER_DONE));
+        }
+
+        protected void onStillCaptureDone() {
+            mStateBackWorker.execute(new HandleEventTask(ControlEvent.ON_STILL_CAPTURE_DONE));
+        }
+
+        // Event handler.
+        private void handleEvent(ControlEvent event) {
+            if (IS_DEBUG) logDebug(TAG, "handleEvent() : EVENT=" + event.name());
+
+            switch (event) {
+                case ON_RESUME:
+                    mCurrentState.onResume();
+                    break;
+
+                case ON_PAUSE:
+                    mCurrentState.onPause();
+                    break;
+
+                case ON_CAMERA_INITIALIZED:
+                    mCurrentState.onCameraInitialized();
+                    break;
+
+                case ON_CAMERA_FINALIZED:
+                    mCurrentState.onCameraFinalized();
+                    break;
+
+                case ON_UI_SURFACE_INITIALIZED:
+                    mCurrentState.onUiSurfaceInitialized();
+                    break;
+
+                case ON_UI_SURFACE_FINALIZED:
+                    mCurrentState.onUiSurfaceFinalized();
+                    break;
+
+                case ON_SCAN_LOCK_REQUESTED:
+                    mCurrentState.onScanLockRequested();
+                    break;
+
+                case ON_SCAN_LOCK_CANCELED:
+                    mCurrentState.onScanLockCanceled();
+                    break;
+
+                case ON_SCAN_LOCK_DONE:
+                    mCurrentState.onScanLockDone();
+                    break;
+
+                case ON_STILL_CAPTURE_REQUESTED:
+                    mCurrentState.onStillCaptureRequested();
+                    break;
+
+                case ON_STILL_SHUTTER_DONE:
+                    mCurrentState.onStillShutterDone();
+                    break;
+
+                case ON_STILL_CAPTURE_DONE:
+                    mCurrentState.onStillCaptureDone();
+                    break;
+
+                default:
+                    throw new IllegalArgumentException("Unexpected event : " + event.name());
+            }
+
+
+        }
+
+
+    }
 
 
 }

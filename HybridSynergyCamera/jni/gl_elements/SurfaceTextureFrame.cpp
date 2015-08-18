@@ -1,6 +1,7 @@
 ﻿#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 
-#include "SimpleFrame.hpp"
+#include "SurfaceTextureFrame.hpp"
 
 #include "android_opengl_matrix.h"
 #include "TraceLog.h"
@@ -8,27 +9,21 @@
 namespace fezrestia {
 
 // CONSTRUCTOR.
-SimpleFrame::SimpleFrame() {
+SurfaceTextureFrame::SurfaceTextureFrame() {
     // NOP.
 }
 
 // DESTRUCTOR.
-SimpleFrame::~SimpleFrame() {
+SurfaceTextureFrame::~SurfaceTextureFrame() {
     // NOP.
 }
 
-/**
- * Initialize.
- */
-void SimpleFrame::initialize(float screenNormWidth, float screenNormHeight) {
+void SurfaceTextureFrame::initialize(float screenNormWidth, float screenNormHeight) {
     // Super.
     ElementBase::initialize(screenNormWidth, screenNormHeight);
 }
 
-/**
- * Finalize.
- */
-void SimpleFrame::finalize() {
+void SurfaceTextureFrame::finalize() {
     // Super.
     ElementBase::finalize();
 
@@ -36,31 +31,28 @@ void SimpleFrame::finalize() {
     finalizeShaderProgram();
 }
 
-/**
- * Set shader program index.
- */
-void SimpleFrame::setShaderProgram(GLuint shaderProgram) {
+void SurfaceTextureFrame::setTextureId(GLuint textureId) {
+    mTextureId[0] = textureId;
+}
+
+void SurfaceTextureFrame::setTextureTransformMatrix(GLfloat* matrix4x4) {
+    for (int i = 0; i < 16; ++i) {
+        mTextureTransformMatrix[i] = matrix4x4[i];
+    }
+}
+
+void SurfaceTextureFrame::setShaderProgram(GLuint shaderProgram) {
     // Setup shader.
     mShaderProgram = shaderProgram;
 
     // Create and initialize shader and program.
     initializeShaderProgram();
 }
-
-/**
- * Set simple color, filled in all of this frame.
- */
-void SimpleFrame::setColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) {
-    mColor[0] = red;
-    mColor[1] = green;
-    mColor[2] = blue;
-    mColor[3] = alpha;
+void SurfaceTextureFrame::setAlpha(GLfloat alpha) {
+    mAlpha = alpha;
 }
 
-/**
- * GL call for render.
- */
-void SimpleFrame::render() {
+void SurfaceTextureFrame::render() {
     if (!isVisible()) {
         // Do not render.
         return;
@@ -79,7 +71,7 @@ void SimpleFrame::render() {
     }
 }
 
-GLuint SimpleFrame::enableLocalFunctions() {
+GLuint SurfaceTextureFrame::enableLocalFunctions() {
     // Vertex / Texture for background.
     glEnableVertexAttribArray(mGLSL_aVertex);
     glEnableVertexAttribArray(mGLSL_aTexCoord);
@@ -94,7 +86,7 @@ GLuint SimpleFrame::enableLocalFunctions() {
     return GL_TRUE;
 }
 
-GLuint SimpleFrame::enableShaderProgram() {
+GLuint SurfaceTextureFrame::enableShaderProgram() {
     // Install program object to GL renderer and validate.
     if (mShaderProgram == 0) {
         LOGE("enableShaderProgram():[Program is Invalid]");
@@ -111,16 +103,19 @@ GLuint SimpleFrame::enableShaderProgram() {
     return GL_TRUE;
 }
 
-GLuint SimpleFrame::disableLocalFunctions() {
+GLuint SurfaceTextureFrame::disableLocalFunctions() {
     // Vertex / Texture for background.
     glDisableVertexAttribArray(mGLSL_aVertex);
     glDisableVertexAttribArray(mGLSL_aTexCoord);
+
+    // Unset program.
+    glUseProgram(0);
 
     // No error.
     return GL_TRUE;
 }
 
-void SimpleFrame::doRender() {
+void SurfaceTextureFrame::doRender() {
     TRACE_LOG("E");
 
     // Register vertex.
@@ -145,8 +140,17 @@ void SimpleFrame::doRender() {
             0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    // Inject color vector.
-    glUniform4f(mGLSL_uSimpleColor, mColor[0], mColor[1], mColor[2], mColor[3]);
+    // Activate and bind texture.
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, mTextureId[0]);
+
+    if (checkGlError(__FUNCTION__) != GL_NO_ERROR) {
+        LOGE("doRender():[Bind textures Error]");
+        return;
+    }
+
+    // Link alpha channel.
+    glUniform1f(mGLSL_uAlpha, mAlpha);
 
     // MVP matrix.
     float mvpMatrix[16];
@@ -159,15 +163,23 @@ void SimpleFrame::doRender() {
             1, // Length
             GL_FALSE,
             mvpMatrix);
+    glUniformMatrix4fv(
+            mGLSL_uOesTexMatrix,
+            1,
+            GL_FALSE,
+            mTextureTransformMatrix);
 
     // Render.
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // Release.
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
 
     checkGlError(__FUNCTION__);
     TRACE_LOG("X");
 }
 
-void SimpleFrame::initializeShaderProgram() {
+void SurfaceTextureFrame::initializeShaderProgram() {
     TRACE_LOG("E");
 
     // Link vertex information with field of shader source codes.
@@ -176,8 +188,10 @@ void SimpleFrame::initializeShaderProgram() {
     mGLSL_aTexCoord = glGetAttribLocation(mShaderProgram, "aTexCoord");
     // Link MVP matrix.
     mGLSL_uMvpMatrix = glGetUniformLocation(mShaderProgram, "uMvpMatrix");
-    // Link Color vector.
-    mGLSL_uSimpleColor = glGetUniformLocation(mShaderProgram, "uSimpleColor");
+    // Link OES texture matrix.
+    mGLSL_uOesTexMatrix = glGetUniformLocation(mShaderProgram, "uOesTexMatrix");
+    // Link alpha.
+    mGLSL_uAlpha = glGetUniformLocation(mShaderProgram, "uAlpha");
 
     checkGlError(__FUNCTION__);
 
@@ -187,7 +201,7 @@ void SimpleFrame::initializeShaderProgram() {
     TRACE_LOG("X");
 }
 
-void SimpleFrame::initializeVertexAndTextureCoordinatesBuffer() {
+void SurfaceTextureFrame::initializeVertexAndTextureCoordinatesBuffer() {
     const GLuint vertexBufLen = 12;
     const GLuint texCoordBufLen = 8;
 
@@ -198,10 +212,11 @@ void SimpleFrame::initializeVertexAndTextureCoordinatesBuffer() {
               getScreenNormWidth() / 2.0f,  - getScreenNormHeight() / 2.0f, 0.0f, // Right-Bottom
     };
     float texCoord[texCoordBufLen] = {
-            0.0f,   0.0f, // Left-Top
-            0.0f,   1.0f, // Left-Bottom
-            1.0f,   0.0f, // Right-Top
-            1.0f,   1.0f, // Right-Bottom
+            // Up side down.
+            0.0f,   1.0f, // Left-Top
+            0.0f,   0.0f, // Left-Bottom
+            1.0f,   1.0f, // Right-Top
+            1.0f,   0.0f, // Right-Bottom
     };
 
     // Create buffer object.
@@ -228,14 +243,14 @@ void SimpleFrame::initializeVertexAndTextureCoordinatesBuffer() {
     checkGlError(__FUNCTION__);
 }
 
-void SimpleFrame::finalizeShaderProgram() {
+void SurfaceTextureFrame::finalizeShaderProgram() {
     mShaderProgram = 0;
 
     // Delete vertex and texture coordinates buffer objects.
     finalizeVertexAndTextureCoordinatesBuffer();
 }
 
-void SimpleFrame::finalizeVertexAndTextureCoordinatesBuffer() {
+void SurfaceTextureFrame::finalizeVertexAndTextureCoordinatesBuffer() {
     // Delete buffer objects.
     glDeleteBuffers(
             1, // Size

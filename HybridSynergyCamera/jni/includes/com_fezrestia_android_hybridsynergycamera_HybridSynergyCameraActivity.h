@@ -59,18 +59,12 @@ JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSyne
 
 /*
  * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
- * Method:    nativeOnPreviewFrameUpdated
- * Signature: (III[BII)I
+ * Method:    nativeOnCameraPreviewStreamUpdated
+ * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnPreviewFrameUpdated(
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPreviewStreamUpdated(
         JNIEnv* jenv,
-        jclass clazz,
-        jint frameWidth,
-        jint frameHeight,
-        jint imageFormat,
-        jbyteArray frameBuffer,
-        jint frameBufferOffset,
-        jint frameBufferSize);
+        jclass clazz);
 
 ////////////////////////////////////////////////////////////////////////////// CAMERA RELATED ////
 
@@ -80,20 +74,78 @@ JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSyne
 
 /*
  * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
- * Method:    nativeOnSurfaceInitialized
+ * Method:    nativeOnUiSurfaceInitialized
  * Signature: (Landroid/view/Surface;)I
  */
-JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnSurfaceInitialized(
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnUiSurfaceInitialized(
         JNIEnv* jenv,
         jclass clazz,
         jobject surface);
 
 /*
  * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
- * Method:    nativeOnSurfaceFinalized
+ * Method:    nativeOnUiSurfaceFinalized
  * Signature: (V)I
  */
-JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnSurfaceFinalized(
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnUiSurfaceFinalized(
+        JNIEnv* jenv,
+        jclass clazz);
+
+/*
+ * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
+ * Method:    nativeOnCameraPreviewStreamInitialized
+ * Signature: (Landroid/view/Surface;II)I
+ */
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPreviewStreamInitialized(
+        JNIEnv* jenv,
+        jclass clazz,
+        jobject surface,
+        jint width,
+        jint height);
+
+/*
+ * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
+ * Method:    nativeOnCameraPreviewStreamFinalized
+ * Signature: (V)I
+ */
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPreviewStreamFinalized(
+        JNIEnv* jenv,
+        jclass clazz);
+
+/*
+ * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
+ * Method:    nativeGetTextureNameOfCameraPreviewStream
+ * Signature: (V)I
+ */
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeGetTextureNameOfCameraPreviewStream(
+        JNIEnv* jenv,
+        jclass clazz);
+
+/*
+ * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
+ * Method:    nativeSetSurfaceTextureTransformMatrix
+ * Signature: ([F)I
+ */
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeSetSurfaceTextureTransformMatrix(
+        JNIEnv* jenv,
+        jclass clazz,
+        jfloatArray textureTransformMatrix);
+
+/*
+ * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
+ * Method:    nativeBindApplicationEglContext
+ * Signature: (V)I
+ */
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeBindApplicationEglContext(
+        JNIEnv* jenv,
+        jclass clazz);
+
+/*
+ * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
+ * Method:    nativeUnbindApplicationEglContext
+ * Signature: (V)I
+ */
+JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeUnbindApplicationEglContext(
         JNIEnv* jenv,
         jclass clazz);
 

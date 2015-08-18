@@ -22,6 +22,7 @@ LOCAL_SRC_FILES := \
         gl_elements/ElementBase.cpp \
         gl_elements/SimpleFrame.cpp \
         gl_elements/YuvFrame.cpp \
+        gl_elements/SurfaceTextureFrame.cpp \
         HybridSynergyCamera.cpp \
 
 LOCAL_LDLIBS := \

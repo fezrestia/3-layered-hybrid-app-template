@@ -1,18 +1,22 @@
-﻿#ifndef SIMPLE_FRAME_H
-#define SIMPLE_FRAME_H
+﻿#ifndef SURFACE_TEXTURE_FRAME_H
+#define SURFACE_TEXTURE_FRAME_H
 
 #include "ElementBase.hpp"
 
 namespace fezrestia {
 
-class SimpleFrame : public ElementBase {
+class SurfaceTextureFrame : public ElementBase {
 
 public:
-    // CONSTRUCTOR.
-    SimpleFrame();
+    /**
+     * CONSTRUCTOR.
+     */
+    SurfaceTextureFrame();
 
-    // DESTRUCTOR.
-    ~SimpleFrame();
+    /**
+     * DESTRUCTOR.
+     */
+    ~SurfaceTextureFrame();
 
     /**
      * Initialize.
@@ -25,14 +29,24 @@ public:
     void finalize();
 
     /**
+     * Set texture ID.
+     */
+    void setTextureId(GLuint textureId);
+
+    /**
+     * Set texture transform matrix.
+     */
+    void setTextureTransformMatrix(GLfloat* matrix4x4);
+
+    /**
      * Set shader program index.
      */
     void setShaderProgram(GLuint shaderProgram);
 
     /**
-     * Set simple color, filled in all of this frame.
+     * Set alpha channel.
      */
-    void setColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+    void setAlpha(GLfloat alpha);
 
     /**
      * GL call for render.
@@ -42,21 +56,26 @@ public:
 private:
     //// MEMBER FIELDS ///////////////////////////////////////////////////////////////////////////
 
-    /** Shader program. */
+    // Shader.
     GLuint mShaderProgram;
 
-    /** GLSL index for background texture. */
+    // Texture.
+    GLuint mTextureId[1];
+    GLfloat mTextureTransformMatrix[16];
+
+    // GLSL index.
     GLuint mGLSL_aVertex;
     GLuint mGLSL_aTexCoord;
     GLuint mGLSL_uMvpMatrix;
-    GLuint mGLSL_uSimpleColor;
+    GLuint mGLSL_uOesTexMatrix;
+    GLuint mGLSL_uAlpha;
 
-    /** Buffer objects. */
+    // Buffers.
     GLuint mVertexBuffer;
     GLuint mTexCoordBuffer;
 
-    /** Color vector. */
-    GLfloat mColor[4];
+    // Alpha.
+    GLfloat mAlpha;
 
     //// FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
 
@@ -79,4 +98,4 @@ private:
 
 }; // namespace fezrestia
 
-#endif // SIMPLE_FRAME_H
+#endif // SURFACE_TEXTURE_FRAME_H

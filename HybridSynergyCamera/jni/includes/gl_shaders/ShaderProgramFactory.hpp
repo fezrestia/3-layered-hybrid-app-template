@@ -16,6 +16,7 @@ public:
     enum ShaderType {
         ShaderType_SINGLE_COLOR,
         ShaderType_YUV,
+        ShaderType_SURFACE_TEXTURE,
 
         ShaderType_MAX
     };

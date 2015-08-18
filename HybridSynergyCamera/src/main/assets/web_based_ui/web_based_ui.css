@@ -1,0 +1,72 @@
+/* Web based UI CSS3 */
+
+/*
+  XXXHDPI configured for icon size pixels.
+*/
+
+html, body {
+    background-color: transparent;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+div, p {
+    color: red;
+}
+
+img.corner-icon-class {
+    width: 60px;
+    height: 60px;
+}
+
+.vertical-stack-box {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-box-pack: center;
+    -webkit-box-align: center;
+    width: 100%;
+    height: 20%;
+}
+
+#root {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+}
+
+#left-icon-area {
+    order: 0;
+    position: relative;
+    width: 10%;
+    height: 100%;
+
+/* DEBUG
+    background: red;
+*/
+}
+
+#center-icon-area {
+    order: 1;
+    position: relative;
+    width: 80%;
+    height: 100%;
+
+/* DEBUG
+    background: green;
+*/
+}
+
+#right-icon-area {
+    order: 2;
+    position: relative;
+    width: 10%;
+    height: 100%;
+
+/* DEBUG
+    background: blue;
+*/
+}

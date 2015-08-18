@@ -3,6 +3,7 @@
 
 #define GL_VIEW_PORT_NORM_WIDTH     2.0f
 #define GL_VIEW_PORT_NORM_HEIGHT    2.0f
+
 // ----------------------------- <- GL view port top
 // |                           |
 // |                           |

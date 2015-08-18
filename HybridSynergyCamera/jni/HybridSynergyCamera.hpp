@@ -9,6 +9,7 @@
 #include "ShaderProgramFactory.hpp"
 #include "ElementBase.hpp"
 #include "YuvFrame.hpp"
+#include "SurfaceTextureFrame.hpp"
 
 namespace fezrestia {
 
@@ -29,9 +30,9 @@ typedef struct {
     bool mIsValid;
 
     // Dimensions.
-    int32_t mWidth;
-    int32_t mHeight;
-    int32_t mFormat;
+    int mWidth;
+    int mHeight;
+    int mFormat;
 
     // Buffer.
     unsigned char* mBuffer;
@@ -43,7 +44,15 @@ typedef struct {
     EGLSurface mEglReadSurface;
     EGLSurface mEglDrawSurface;
     EGLContext mEglContext;
-} egl_pack;
+} system_default_egl;
+
+typedef struct {
+    EGLDisplay mEglDisplay;
+    EGLConfig mEglConfig;
+    EGLSurface mEglSurfaceUi;
+    EGLSurface mEglSurfaceCameraPreviewStream;
+    EGLContext mEglContext;
+} application_egl;
 
 typedef struct {
     // JAVA environment.
@@ -60,13 +69,11 @@ typedef struct {
     jmethodID mActivitySendCommandMethodId;
 
     // System default EGL.
-    egl_pack* mSystemDefaultEgl;
-
-    // This EGL.
-    egl_pack* mThisEgl;
+    system_default_egl* mSystemDefaultEgl;
+    // Application EGL.
+    application_egl* mApplicationEgl;
 
     // GL global.
-    bool mIsRenderRequested;
     float* mViewMatrix;
     float* mProjectionMatrix;
 
@@ -74,15 +81,22 @@ typedef struct {
     ShaderProgramFactory* mShaderProgramFactory;
 
     // Native windlw.
-    ANativeWindow* mTargetNativeWindow;
+    ANativeWindow* mNativeWindowUi;
+    ANativeWindow* mNativeWindowCameraPreviewStream;
 
     // Resolution.
-    int32_t mDisplayWidth;
-    int32_t mDisplayHeight;
+    int mSurfaceUiWidth;
+    int mSurfaceUiHeight;
+    int mSurfaceCameraPreviewStreamWidth;
+    int mSurfaceCameraPreviewStreamHeight;
 
-    // Main frame.
+    // Frame renderer.
     frame_buffer* mMainFrame;
     YuvFrame* mMainFrameRenderer;
+    SurfaceTextureFrame* mSurfaceTextureFrame;
+
+    // Textures.
+    GLuint mTextureCameraPreviewStream[1];
 } app_context;
 
 // Prepare accessor to JAVA layer.
@@ -95,11 +109,19 @@ static void releaseAccessorToJava(app_context* appContext);
 static void sendCommandToJava(app_context* appContext, int32_t command);
 static void sendCommandToJava(app_context* appContext, int32_t command, int32_t arg);
 
-// EGL initialize.
+// EGL initialize/finalize.
 static int context_initialize_egl(app_context* appContext);
+static int context_finalize_egl(app_context* appContext);
 
-// EGL finalize.
-static void context_finalize_egl(app_context* appContext);
+// EGL surface initialize/finalize.
+static int context_initialize_egl_surface_ui(app_context* appContext);
+static int context_initialize_egl_surface_camera_preview_stream(app_context* appContext);
+static int context_finalize_egl_surface_ui(app_context* appContext);
+static int context_finalize_egl_surface_camera_preview_stream(app_context* appContext);
+
+// EGL control.
+static int context_change_current_egl_to(app_context* appContext, EGLSurface clientEglSurface);
+static int context_return_egl_to_system_default(app_context* appContext);
 
 // GL initialize.
 static void context_initialize_gl(app_context* appContext);
@@ -109,6 +131,7 @@ static void context_finalize_gl(app_context* appContext);
 
 // GL/EGL render frame.
 static void context_render_frame(app_context* appContext);
+static void context_render_camera_preview_stream(app_context* appContext);
 
 // Check UI thread.
 static bool isMainThread();

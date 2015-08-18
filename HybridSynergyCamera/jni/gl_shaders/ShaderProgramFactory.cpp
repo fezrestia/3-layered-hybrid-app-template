@@ -105,6 +105,9 @@ const char* ShaderProgramFactory::getShaderSrcFileName(GLenum isVertOrFrag, Shad
 
                 case ShaderType_YUV:
                     return "glsl_src/yvu420sp_vertex.glsl";
+
+                case ShaderType_SURFACE_TEXTURE:
+                    return "glsl_src/surface_texture_frame_vertex.glsl";
             }
             break;
 
@@ -115,6 +118,9 @@ const char* ShaderProgramFactory::getShaderSrcFileName(GLenum isVertOrFrag, Shad
 
                 case ShaderType_YUV:
                     return "glsl_src/yvu420sp_fragment.glsl";
+
+                case ShaderType_SURFACE_TEXTURE:
+                    return "glsl_src/surface_texture_frame_fragment.glsl";
             }
             break;
     }
