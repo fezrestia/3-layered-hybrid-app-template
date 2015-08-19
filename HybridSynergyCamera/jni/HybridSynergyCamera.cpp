@@ -91,6 +91,12 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
         jobject surface) {
     TRACE_LOG("E");
 
+    // Life-cycle check.
+    if (gAppContext == NULL) {
+        LOGE("gAppContext is already released.");
+        return 0;
+    }
+
     // Native window.
     gAppContext->mNativeWindowUi = ANativeWindow_fromSurface(jenv, surface);
 
@@ -142,6 +148,12 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
+
+    // Life-cycle check.
+    if (gAppContext == NULL) {
+        LOGE("gAppContext is already released.");
+        return 0;
+    }
 
     // Camera preview stream textures.
     {

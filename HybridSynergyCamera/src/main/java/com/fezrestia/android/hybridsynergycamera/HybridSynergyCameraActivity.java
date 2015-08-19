@@ -35,7 +35,7 @@ public class HybridSynergyCameraActivity extends Activity {
 
     private static final String TAG = HybridSynergyCameraActivity.class.getSimpleName();
 
-    private static final boolean IS_DEBUG = true;
+    private static final boolean IS_DEBUG = false;
 
     private static void logDebug(String tag, String event) {
         android.util.Log.e("TraceLog",
@@ -230,7 +230,7 @@ public class HybridSynergyCameraActivity extends Activity {
             mCameraBackWorker.execute(task);
 
             // Notify to state.
-            mControlEventInterface.onUiSurfaceInitialized();
+            mControlEventInterface.onUiSurfaceFinalized();
 
             if (IS_DEBUG) logDebug(TAG, "onSurfaceTextureDestroyed() : X");
             return false;
