@@ -7,19 +7,20 @@
 extern "C" {
 #endif
 
-
+JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*);
+JNIEXPORT void JNI_OnUnload(JavaVM* vm, void*);
 
 //// ACTIVITY RELATED ////////////////////////////////////////////////////////////////////////////
 
 /*
  * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity
  * Method:    nativeOnActivityCreated
- * Signature: (Landroid/content/res/AssetManager;)I
+ * Signature: (Lcom/fezrestia/android/hybridsynergycamera/HybridSynergyCameraActivity;)I
  */
 JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnActivityCreated(
         JNIEnv* jenv,
         jclass clazz,
-        jobject jAssetManager);
+        jobject thiz);
 
 /*
  * Class:     com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity

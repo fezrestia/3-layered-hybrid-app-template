@@ -18,12 +18,28 @@
 
 namespace fezrestia {
 
-
+// JAVA VM.
+static JavaVM* gVm;
 
 // Total application context.
-app_context* gAppContext = NULL;
+static app_context* gAppContext = NULL;
 
+extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    TRACE_LOG("E");
 
+    gVm = vm;
+
+    TRACE_LOG("X");
+    return JNI_VERSION_1_6;
+}
+
+extern "C" void JNI_OnUnload(JavaVM* vm, void* reserved) {
+    TRACE_LOG("E");
+
+    gVm = NULL;
+
+    TRACE_LOG("X");
+}
 
 //// ACTIVITY RELATED ////////////////////////////////////////////////////////////////////////////
 
@@ -31,29 +47,37 @@ app_context* gAppContext = NULL;
 extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnActivityCreated(
         JNIEnv* jenv,
         jclass clazz,
-        jobject jAssetManager) {
+        jobject thiz) {
     TRACE_LOG("E");
 
     gAppContext = new app_context();
 
-    // JNI Env.
-    gAppContext->mJNIEnv = jenv;
-
-    // Activity.
-    jclass activityClazz = gAppContext->mJNIEnv->FindClass(
+    // Cache JAVA references.
+    jclass activityClazz = jenv->FindClass(
             "com/fezrestia/android/hybridsynergycamera/HybridSynergyCameraActivity");
-    jmethodID methodId = gAppContext->mJNIEnv->GetStaticMethodID(
+    jmethodID getVertexShaderCodeMethodId = jenv->GetMethodID(
             activityClazz,
-            "sendCommandFromNative",
-            "(II)V");
-    gAppContext->mActivityClazz = activityClazz;
-    gAppContext->mActivityCallbackMethodId = methodId;
-    gAppContext->mJNIEnv->DeleteLocalRef(activityClazz);
+            "getVertexShaderCode",
+            "()Ljava/lang/String;");
+    jmethodID getFragmentShaderCodeMethodId = jenv->GetMethodID(
+            activityClazz,
+            "getFragmentShaderCode",
+            "()Ljava/lang/String;");
+    jenv->DeleteLocalRef(activityClazz);
 
-    // Asset.
-    gAppContext->mAndroidAssetManager = AAssetManager_fromJava(
-            gAppContext->mJNIEnv,
-            jAssetManager);
+    // Class/Method cache.
+    gAppContext->mJavaClazz = activityClazz;
+    gAppContext->mJavaObj = jenv->NewGlobalRef(thiz);
+
+    // Cache shader code.
+    jstring vertexShaderCodeString = (jstring) jenv->CallObjectMethod(
+            thiz,
+            getVertexShaderCodeMethodId);
+    gAppContext->mVertexShaderCodeString = (jstring) jenv->NewGlobalRef(vertexShaderCodeString);
+    jstring fragmentShaderCodeString = (jstring) jenv->CallObjectMethod(
+            thiz,
+            getFragmentShaderCodeMethodId);
+    gAppContext->mFragmentShaderCodeString = (jstring) jenv->NewGlobalRef(fragmentShaderCodeString);
 
     // Initialize EGL.
     context_initialize_egl(gAppContext);
@@ -71,6 +95,11 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     context_finalize_egl(gAppContext);
 
     if (gAppContext != NULL) {
+        // Release references.
+        jenv->DeleteGlobalRef(gAppContext->mJavaObj);
+        jenv->DeleteGlobalRef(gAppContext->mVertexShaderCodeString);
+        jenv->DeleteGlobalRef(gAppContext->mFragmentShaderCodeString);
+
         delete gAppContext;
         gAppContext = NULL;
     }
@@ -104,7 +133,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     context_initialize_egl_surface_ui(gAppContext);
 
     // Initialize GL.
-    context_initialize_gl(gAppContext);
+    context_initialize_gl(gAppContext, jenv);
 
     // Camera preview stream textures.
     {
@@ -529,7 +558,7 @@ static int context_return_egl_to_system_default(app_context* appContext) {
 
 //// GL INITIALIZE / FINALIZE ////////////////////////////////////////////////////////////////////
 
-static void context_initialize_gl(app_context* appContext) {
+static void context_initialize_gl(app_context* appContext, JNIEnv* jenv) {
     TRACE_LOG("E");
 
     // Enable UI EGL.
@@ -569,13 +598,13 @@ static void context_initialize_gl(app_context* appContext) {
     appContext->mShaderProgramFactory = new ShaderProgramFactory();
     appContext->mShaderProgramFactory->Initialize();
 
-    // Initialize render target elements.
-    appContext->mMainFrameRenderer = new YuvFrame();
-    appContext->mMainFrameRenderer->initialize(GL_VIEW_PORT_NORM_WIDTH, GL_VIEW_PORT_NORM_HEIGHT);
-    GLuint yuvShader = appContext->mShaderProgramFactory->CreateShaderProgram(
-            appContext->mAndroidAssetManager,
-            ShaderProgramFactory::ShaderType_YUV);
-    appContext->mMainFrameRenderer->setShaderProgram(yuvShader);
+    // Gen shader code bytes.
+    jstring vertexStr = gAppContext->mVertexShaderCodeString;
+    const char* vertexBytes = jenv->GetStringUTFChars(vertexStr, NULL);
+    size_t vertexBytesLen = jenv->GetStringLength(vertexStr);
+    jstring fragmentStr = gAppContext->mFragmentShaderCodeString;
+    const char* fragmentBytes = jenv->GetStringUTFChars(fragmentStr, NULL);
+    size_t fragmentBytesLen = jenv->GetStringLength(fragmentStr);
 
     // SurfaceTexture renderer.
     appContext->mSurfaceTextureFrame = new SurfaceTextureFrame();
@@ -583,9 +612,16 @@ static void context_initialize_gl(app_context* appContext) {
             GL_VIEW_PORT_NORM_WIDTH,
             GL_VIEW_PORT_NORM_HEIGHT);
     GLuint surfaceTextureShader = appContext->mShaderProgramFactory->CreateShaderProgram(
-            appContext->mAndroidAssetManager,
-            ShaderProgramFactory::ShaderType_SURFACE_TEXTURE);
+            ShaderProgramFactory::ShaderType_SURFACE_TEXTURE,
+            vertexBytes,
+            vertexBytesLen,
+            fragmentBytes,
+            fragmentBytesLen);
     appContext->mSurfaceTextureFrame->setShaderProgram(surfaceTextureShader);
+
+    // Release shader code bytes.
+    jenv->ReleaseStringUTFChars(vertexStr, vertexBytes);
+    jenv->ReleaseStringUTFChars(fragmentStr, fragmentBytes);
 
     // Return EGL to system default.
     context_return_egl_to_system_default(appContext);
@@ -636,26 +672,6 @@ static void context_finalize_gl(app_context* appContext) {
 }
 
 //////////////////////////////////////////////////////////////////// GL INITIALIZE / FINALIZE ////
-
-
-
-
-
-
-static void sendCommandToJava(app_context* appContext, int32_t command, int32_t arg) {
-    TRACE_LOG("E");
-
-    appContext->mJNIEnv->CallStaticVoidMethod(
-            appContext->mActivityClazz,
-            appContext->mActivityCallbackMethodId,
-            command,
-            arg);
-
-    TRACE_LOG("X");
-}
-
-
-
 
 
 

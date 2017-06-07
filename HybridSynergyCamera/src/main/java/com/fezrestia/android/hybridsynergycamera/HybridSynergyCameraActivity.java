@@ -2,7 +2,6 @@ package com.fezrestia.android.hybridsynergycamera;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
@@ -11,7 +10,6 @@ import android.os.Handler;
 import android.view.Surface;
 import android.view.TextureView;
 import android.webkit.JavascriptInterface;
-import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -33,7 +31,7 @@ public class HybridSynergyCameraActivity extends Activity {
         System.loadLibrary("hybridsynergycamera");
     }
 
-    private static final String TAG = HybridSynergyCameraActivity.class.getSimpleName();
+    private static final String TAG = "HybridSynergyCameraActivity";
 
     private static final boolean IS_DEBUG = false;
 
@@ -82,7 +80,7 @@ public class HybridSynergyCameraActivity extends Activity {
         super.onCreate(bundle);
 
         // Notify to Native.
-        nativeOnActivityCreated(this.getResources().getAssets());
+        nativeOnActivityCreated(this);
 
         // UI.
         mRootView = new FrameLayout(this);
@@ -170,6 +168,29 @@ public class HybridSynergyCameraActivity extends Activity {
 
         super.onDestroy();
         if (IS_DEBUG) logDebug(TAG, "onDestroy() : X");
+    }
+
+    //// ANDROID OS DEPENDENCY RESOLVER ///////////////////////////////////////////////////////////
+
+    private String getStringAsset(String assetsName) {
+        String asset = "";
+
+        try {
+            InputStream fis = getAssets().open(assetsName);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+            String tmp;
+            while ((tmp = reader.readLine()) != null) {
+                asset = asset + tmp + '\n';
+            }
+            reader.close();
+            fis.close();
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return asset;
     }
 
     //// UI SURFACE TEXTURE RELATED ///////////////////////////////////////////////////////////////
@@ -282,27 +303,24 @@ public class HybridSynergyCameraActivity extends Activity {
         }
     }
 
-    //// NATIVE TO JAVA COMMAND RELATED ///////////////////////////////////////////////////////////
+    //// API CALLED FROM NATIVE ///////////////////////////////////////////////////////////////////
 
-    // Commands.
-    private static final int CMD_STORE_NATIVE_APP_CONTEXT_POINTER       = 0x0001;
-    private static final int CMD_ACTIVITY_ON_RESUMED                    = 0x0010;
-    private static final int CMD_ACTIVITY_ON_PAUSED                     = 0x0020;
-    private static final int CMD_WINDOW_INIT                            = 0x0100;
-    private static final int CMD_WINDOW_TERM                            = 0x0200;
+    public String getVertexShaderCode() {
+        if (IS_DEBUG) logDebug(TAG, "getVertexShaderCode() : E");
 
-    public static void sendCommandFromNative(int command, int arg) {
-        if (IS_DEBUG) logDebug(TAG, "sendCommandFromNative() : E");
+        String shader = getStringAsset("glsl_src/surface_texture_frame_vertex.glsl");
 
-        switch (command) {
+        if (IS_DEBUG) logDebug(TAG, "getVertexShaderCode() : X");
+        return shader;
+    }
 
+    public String getFragmentShaderCode() {
+        if (IS_DEBUG) logDebug(TAG, "getFragmentShaderCode() : E");
 
+        String shader = getStringAsset("glsl_src/surface_texture_frame_fragment.glsl");
 
-            default:
-                if (IS_DEBUG) logDebug(TAG, "sendCommandFromNative() : UNEXPECTED");
-                // NOP.
-                break;
-        }
+        if (IS_DEBUG) logDebug(TAG, "getFragmentShaderCode() : X");
+        return shader;
     }
 
     //// CAMERA INITIALIZE / FINALIZE RELATED /////////////////////////////////////////////////////
@@ -638,8 +656,7 @@ public class HybridSynergyCameraActivity extends Activity {
 
     //// NATIVE FUNCTION ACCESSOR ////////////////////////////////////////////////////////////////
 
-    private static final native int nativeOnActivityCreated(
-            AssetManager assetManager);
+    private static final native int nativeOnActivityCreated(Object thiz);
     private static final native int nativeOnActivityDestroyed();
 
     private static final native int nativeOnCameraPrepared(
@@ -710,27 +727,6 @@ public class HybridSynergyCameraActivity extends Activity {
             loadUrl("file:///android_asset/web_based_ui/web_based_ui.html");
         }
 
-        private String loadJs(String assetsName) {
-            String script = "";
-
-            try {
-                InputStream fis = getContext().getAssets().open(assetsName);
-                BufferedReader reader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
-                String tmp;
-                while ((tmp = reader.readLine()) != null) {
-                    script = script + tmp + '\n';
-                }
-                reader.close();
-                fis.close();
-            } catch (FileNotFoundException e) {
-                e.printStackTrace();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-            return script;
-        }
-
         /**
          * Release all references.
          */
@@ -741,35 +737,6 @@ public class HybridSynergyCameraActivity extends Activity {
 
             setWebViewClient(null);
             setWebChromeClient(null);
-        }
-
-        private class ExecuteJavaScriptTask implements Runnable {
-            // Target script.
-            private final String mScript;
-
-            /**
-             * CONSTRUCTOR.
-             *
-             * @param script
-             */
-            public ExecuteJavaScriptTask(String script) {
-                mScript = script;
-            }
-
-            @Override
-            public void run() {
-                evaluateJavascript(mScript, new JavaScriptExecutionCallback());
-            }
-        }
-
-        private class JavaScriptExecutionCallback implements ValueCallback<String> {
-            // Log tag.
-            private final String TAG = JavaScriptExecutionCallback.class.getSimpleName();
-
-            @Override
-            public void onReceiveValue(String value) {
-                if (IS_DEBUG) logDebug(TAG, "onReceiveValue() : " + value);
-            }
         }
 
         private final JavaScriptNativeInterface mJSNI = new JavaScriptNativeInterface();

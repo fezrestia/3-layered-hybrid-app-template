@@ -13,8 +13,6 @@
 
 namespace fezrestia {
 
-
-
 // Command to JAVA layer.
 enum {
     CMD_STORE_NATIVE_APP_CONTEXT_POINTER        = 0x0001,
@@ -55,18 +53,13 @@ typedef struct {
 } application_egl;
 
 typedef struct {
-    // JAVA environment.
-    JNIEnv* mJNIEnv;
-
     // JAVA Activity object.
-    jclass mActivityClazz;
-    jmethodID mActivityCallbackMethodId;
+    jclass mJavaClazz;
+    jobject mJavaObj;
 
-    // Asset manager.
-    AAssetManager* mAndroidAssetManager;
-
-    // JAVA accessor.
-    jmethodID mActivitySendCommandMethodId;
+    // Shader code.
+    jstring mVertexShaderCodeString;
+    jstring mFragmentShaderCodeString;
 
     // System default EGL.
     system_default_egl* mSystemDefaultEgl;
@@ -105,10 +98,6 @@ static void prepareAccessorToJava(app_context* appContext);
 // Release accessor to JAVA layer.
 static void releaseAccessorToJava(app_context* appContext);
 
-// Send command to JAVA layer.
-static void sendCommandToJava(app_context* appContext, int32_t command);
-static void sendCommandToJava(app_context* appContext, int32_t command, int32_t arg);
-
 // EGL initialize/finalize.
 static int context_initialize_egl(app_context* appContext);
 static int context_finalize_egl(app_context* appContext);
@@ -124,7 +113,7 @@ static int context_change_current_egl_to(app_context* appContext, EGLSurface cli
 static int context_return_egl_to_system_default(app_context* appContext);
 
 // GL initialize.
-static void context_initialize_gl(app_context* appContext);
+static void context_initialize_gl(app_context* appContext, JNIEnv* jenv);
 
 // GL finalize.
 static void context_finalize_gl(app_context* appContext);

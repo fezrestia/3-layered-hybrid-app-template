@@ -3,8 +3,6 @@
 
 #include <GLES2/gl2.h>
 
-#include <android/asset_manager.h>
-
 #define INVALID_PROGRAM 0
 
 namespace fezrestia {
@@ -12,7 +10,7 @@ namespace fezrestia {
 class ShaderProgramFactory {
 
 public:
-    // Shader program type.
+    // Shader program target.
     enum ShaderType {
         ShaderType_SINGLE_COLOR,
         ShaderType_YUV,
@@ -21,7 +19,6 @@ public:
         ShaderType_MAX
     };
 
-public:
     // CONSTRUCTOR.
     ShaderProgramFactory();
 
@@ -41,20 +38,26 @@ public:
     /**
      * Get shader program according to type.
      */
-    GLuint CreateShaderProgram(AAssetManager* assetManager, ShaderType type);
+    GLuint CreateShaderProgram(
+            ShaderType type,
+            const char* vertexShaderCode,
+            size_t vertexShaderCodeLen,
+            const char* fragmentShaderCode,
+            size_t fragmentShaderCodeLen);
 
 private:
+
     // FIELDS ////////////////////////////////////////////////////////////////////////////////////
 
     GLuint mShaderPrograms[ShaderType_MAX];
 
     // FUNCTIONS /////////////////////////////////////////////////////////////////////////////////
 
-    const char* getShaderSrcFileName(GLenum isVertOrFrag, ShaderType type);
-
     GLuint createProgram(
-            GLchar* vertexSource, GLsizei vertexSourceLength,
-            GLchar* fragmentSource, GLsizei fragmentSourceLength);
+            GLchar* vertexSource,
+            GLsizei vertexSourceLength,
+            GLchar* fragmentSource,
+            GLsizei fragmentSourceLength);
 
     GLuint loadShader(
             GLenum shaderType,

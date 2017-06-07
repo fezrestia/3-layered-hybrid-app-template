@@ -4,7 +4,6 @@
 
 #include <sys/types.h>
 
-
 namespace fezrestia {
 
 // CONSTRUCTOR.
@@ -41,7 +40,12 @@ void ShaderProgramFactory::Finalize() {
 /**
  * Get shader program according to type.
  */
-GLuint ShaderProgramFactory::CreateShaderProgram(AAssetManager* assetManager, ShaderType type) {
+GLuint ShaderProgramFactory::CreateShaderProgram(
+        ShaderType type,
+        const char* vertexShaderCode,
+        size_t vertexShaderCodeLen,
+        const char* fragmentShaderCode,
+        size_t fragmentShaderCodeLen) {
     if (mShaderPrograms[type] != INVALID_PROGRAM) {
         // Already created.
         return mShaderPrograms[type];
@@ -49,89 +53,21 @@ GLuint ShaderProgramFactory::CreateShaderProgram(AAssetManager* assetManager, Sh
 
     TRACE_LOG("Create new ShaderProgram.");
 
-    // Get vertex/fragment shader src file path.
-    const char* vertexShaderSrcFile = getShaderSrcFileName(GL_VERTEX_SHADER, type);
-    const char* fragmentShaderSrcFile = getShaderSrcFileName(GL_FRAGMENT_SHADER, type);
-
-    if (vertexShaderSrcFile == NULL || fragmentShaderSrcFile == NULL) {
-        LOGE("Unexpected ShaderType.");
-        return INVALID_PROGRAM;
-    }
-
-    // Vertex.
-    // Open assets.
-    AAsset* vertexSrcAsset = AAssetManager_open(
-            assetManager,
-            vertexShaderSrcFile,
-            AASSET_MODE_RANDOM);
-    GLsizei vertSrcLen = AAsset_getLength(vertexSrcAsset);
-    // Src codes.
-    GLchar vertSrc[vertSrcLen + 1];
-    // Read.
-    AAsset_seek(vertexSrcAsset, 0, 0);
-    AAsset_read(vertexSrcAsset, vertSrc, vertSrcLen);
-    vertSrc[vertSrcLen] = NULL; // Terminal.
-    // Close assets.
-    AAsset_close(vertexSrcAsset);
-
-    // Fragment.
-    // Open assets.
-    AAsset* fragmentSrcAsset = AAssetManager_open(
-            assetManager,
-            fragmentShaderSrcFile,
-            AASSET_MODE_RANDOM);
-    GLsizei fragSrcLen = AAsset_getLength(fragmentSrcAsset);
-    // Src codes.
-    GLchar fragSrc[fragSrcLen + 1];
-    // Read.
-    AAsset_seek(fragmentSrcAsset, 0, 0);
-    AAsset_read(fragmentSrcAsset, fragSrc, fragSrcLen);
-    fragSrc[fragSrcLen] = NULL; // Terminal.
-    // Close assets.
-    AAsset_close(fragmentSrcAsset);
-
     // Create program.
-    mShaderPrograms[type] = createProgram(vertSrc, vertSrcLen + 1, fragSrc, fragSrcLen + 1);
+    mShaderPrograms[type] = createProgram(
+            (GLchar*) vertexShaderCode,
+            (GLsizei) vertexShaderCodeLen,
+            (GLchar*) fragmentShaderCode,
+            (GLsizei) fragmentShaderCodeLen);
 
     return mShaderPrograms[type];
 }
 
-const char* ShaderProgramFactory::getShaderSrcFileName(GLenum isVertOrFrag, ShaderType type) {
-    switch (isVertOrFrag) {
-        case GL_VERTEX_SHADER:
-            switch (type) {
-                case ShaderType_SINGLE_COLOR:
-                    return "glsl_src/single_color_vertex.glsl";
-
-                case ShaderType_YUV:
-                    return "glsl_src/yvu420sp_vertex.glsl";
-
-                case ShaderType_SURFACE_TEXTURE:
-                    return "glsl_src/surface_texture_frame_vertex.glsl";
-            }
-            break;
-
-        case GL_FRAGMENT_SHADER:
-            switch (type) {
-                case ShaderType_SINGLE_COLOR:
-                    return "glsl_src/single_color_fragment.glsl";
-
-                case ShaderType_YUV:
-                    return "glsl_src/yvu420sp_fragment.glsl";
-
-                case ShaderType_SURFACE_TEXTURE:
-                    return "glsl_src/surface_texture_frame_fragment.glsl";
-            }
-            break;
-    }
-
-    LOGE("Unexpected ShaderType");
-    return NULL;
-}
-
 GLuint ShaderProgramFactory::createProgram(
-        GLchar* vertexSource, GLsizei vertexSourceLength,
-        GLchar* fragmentSource, GLsizei fragmentSourceLength) {
+        GLchar* vertexSource,
+        GLsizei vertexSourceLength,
+        GLchar* fragmentSource,
+        GLsizei fragmentSourceLength) {
     // Load and compile shaders.
     GLuint vertexShader = loadShader(GL_VERTEX_SHADER, vertexSource, vertexSourceLength);
     GLuint fragmentShader = loadShader(GL_FRAGMENT_SHADER, fragmentSource, fragmentSourceLength);
