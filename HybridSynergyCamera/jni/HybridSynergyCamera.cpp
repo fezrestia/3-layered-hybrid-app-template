@@ -1,26 +1,21 @@
-﻿#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <EGL/egl.h>
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
+﻿#include <GLES2/gl2ext.h>
 #include <android/native_window_jni.h>
-#include <android/asset_manager_jni.h>
-#include <unistd.h>
 
 #include "HybridSynergyCamera.hpp"
 
 #include "android_opengl_matrix.h"
-#include "YuvFrame.hpp"
 #include "ShaderProgramFactory.hpp"
 #include "TraceLog.h"
-#include "com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity.h"
+#include "jni_api.h"
 
 namespace fezrestia {
 
+// Definitions.
+#define JAVA_CLASS_NAME "com/fezrestia/android/hybridsynergycamera/HybridSynergyCameraActivity"
+#define NUM_ARRAY_ELEMENTS(p)   ((int) sizeof(p) / sizeof(p[0]))
+
 // JAVA VM.
 static JavaVM* gVm;
-
 // Total application context.
 static app_context* gAppContext = NULL;
 
@@ -28,6 +23,20 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     TRACE_LOG("E");
 
     gVm = vm;
+
+    JNIEnv* env;
+    vm->GetEnv((void**)&env, JNI_VERSION_1_6);
+
+    // Register JNI API.
+    jclass clazz = env->FindClass(JAVA_CLASS_NAME);
+    if (clazz) {
+        int result = env->RegisterNatives(clazz, gJniMethods, NUM_ARRAY_ELEMENTS(gJniMethods));
+        if (result < 0) {
+            LOGE("JNI_OnLoad() : RegisterNatives() FAILED");
+        }
+    } else {
+        LOGE("JNI_OnLoad() : Class is not found.");
+    }
 
     TRACE_LOG("X");
     return JNI_VERSION_1_6;
@@ -43,18 +52,17 @@ extern "C" void JNI_OnUnload(JavaVM* vm, void* reserved) {
 
 //// ACTIVITY RELATED ////////////////////////////////////////////////////////////////////////////
 
-// onActivityCreated()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnActivityCreated(
+static jint nativeOnActivityCreated(
         JNIEnv* jenv,
         jclass clazz,
         jobject thiz) {
+
     TRACE_LOG("E");
 
     gAppContext = new app_context();
 
     // Cache JAVA references.
-    jclass activityClazz = jenv->FindClass(
-            "com/fezrestia/android/hybridsynergycamera/HybridSynergyCameraActivity");
+    jclass activityClazz = jenv->FindClass(JAVA_CLASS_NAME);
     jmethodID getVertexShaderCodeMethodId = jenv->GetMethodID(
             activityClazz,
             "getVertexShaderCode",
@@ -65,8 +73,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
             "()Ljava/lang/String;");
     jenv->DeleteLocalRef(activityClazz);
 
-    // Class/Method cache.
-    gAppContext->mJavaClazz = activityClazz;
+    // Cache JAVA object.
     gAppContext->mJavaObj = jenv->NewGlobalRef(thiz);
 
     // Cache shader code.
@@ -85,8 +92,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     TRACE_LOG("X");
 }
 
-// onActivityDestroyed()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnActivityDestroyed(
+static jint nativeOnActivityDestroyed(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -113,8 +119,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
 
 //// SURFACE RELATED /////////////////////////////////////////////////////////////////////////////
 
-// onUiSurfaceInitialized()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnUiSurfaceInitialized(
+static jint nativeOnUiSurfaceInitialized(
         JNIEnv* jenv,
         jclass clazz,
         jobject surface) {
@@ -172,8 +177,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// onUiSurfaceFinalized()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnUiSurfaceFinalized(
+static jint nativeOnUiSurfaceFinalized(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -202,8 +206,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// onCameraPreviewStreamInitialized()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPreviewStreamInitialized(
+static jint nativeOnCameraPreviewStreamInitialized(
         JNIEnv* jenv,
         jclass clazz,
         jobject surface,
@@ -219,8 +222,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// onCameraPreviewStreamFinalized()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPreviewStreamFinalized(
+static jint nativeOnCameraPreviewStreamFinalized(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -231,15 +233,13 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// getTextureNameOfCameraPreviewStream
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeGetTextureNameOfCameraPreviewStream(
+static jint nativeGetTextureNameOfCameraPreviewStream(
         JNIEnv* jenv,
         jclass clazz) {
     return gAppContext->mTextureCameraPreviewStream[0];
 }
 
-// setSurfaceTextureTransformMatrix
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeSetSurfaceTextureTransformMatrix(
+static jint nativeSetSurfaceTextureTransformMatrix(
         JNIEnv* jenv,
         jclass clazz,
         jfloatArray textureTransformMatrix) {
@@ -254,8 +254,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// bindApplicationEglContext
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeBindApplicationEglContext(
+static jint nativeBindApplicationEglContext(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -270,8 +269,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// unbindApplicationEglContext
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeUnbindApplicationEglContext(
+static jint nativeUnbindApplicationEglContext(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -636,11 +634,6 @@ static void context_finalize_gl(app_context* appContext) {
     context_change_current_egl_to(appContext, appContext->mApplicationEgl->mEglSurfaceUi);
 
     // Release and delete render target.
-    if (appContext->mMainFrameRenderer != NULL) {
-        appContext->mMainFrameRenderer->finalize();
-        delete appContext->mMainFrameRenderer;
-        appContext->mMainFrameRenderer = NULL;
-    }
     if (appContext->mSurfaceTextureFrame != NULL) {
         appContext->mSurfaceTextureFrame->finalize();
         delete appContext->mSurfaceTextureFrame;
@@ -677,8 +670,7 @@ static void context_finalize_gl(app_context* appContext) {
 
 //// CAMERA RELATED //////////////////////////////////////////////////////////////////////////////
 
-// onCameraPrepared()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPrepared(
+static jint nativeOnCameraPrepared(
         JNIEnv* jenv,
         jclass clazz,
         jint frameWidth,
@@ -723,8 +715,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// onCameraReleased()
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraReleased(
+static jint nativeOnCameraReleased(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -748,8 +739,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera
     return 0;
 }
 
-// onCameraPreviewStreamUpdated
-extern "C" JNIEXPORT jint JNICALL Java_com_fezrestia_android_hybridsynergycamera_HybridSynergyCameraActivity_nativeOnCameraPreviewStreamUpdated(
+static jint nativeOnCameraPreviewStreamUpdated(
         JNIEnv* jenv,
         jclass clazz) {
     TRACE_LOG("E");
@@ -840,20 +830,6 @@ static void context_render_camera_preview_stream(app_context* appContext) {
 }
 
 ////////////////////////////////////////////////////////////////////////////// CAMERA RELATED ////
-
-
-
-
-
-
-//// UTILS ///////////////////////////////////////////////////////////////////////////////////////
-
-// Check UI thread.
-static bool isMainThread() {
-    return gettid() == getpid();
-}
-
-/////////////////////////////////////////////////////////////////////////////////////// UTILS ////
 
 
 

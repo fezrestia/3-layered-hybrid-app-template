@@ -3,12 +3,10 @@
 
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
-#include <android/sensor.h>
 #include <jni.h>
+#include <unistd.h>
 
 #include "ShaderProgramFactory.hpp"
-#include "ElementBase.hpp"
-#include "YuvFrame.hpp"
 #include "SurfaceTextureFrame.hpp"
 
 namespace fezrestia {
@@ -54,7 +52,6 @@ typedef struct {
 
 typedef struct {
     // JAVA Activity object.
-    jclass mJavaClazz;
     jobject mJavaObj;
 
     // Shader code.
@@ -85,7 +82,6 @@ typedef struct {
 
     // Frame renderer.
     frame_buffer* mMainFrame;
-    YuvFrame* mMainFrameRenderer;
     SurfaceTextureFrame* mSurfaceTextureFrame;
 
     // Textures.
@@ -123,7 +119,9 @@ static void context_render_frame(app_context* appContext);
 static void context_render_camera_preview_stream(app_context* appContext);
 
 // Check UI thread.
-static bool isMainThread();
+static bool isMainThread() {
+    return gettid() == getpid();
+}
 
 }; // namespace fezrestia
 
